@@ -18,6 +18,13 @@ export interface CreditLineRepository {
   findById(id: string): Promise<CreditLine | null>;
 
   /**
+   * Lock the row for the remainder of the current transaction (Postgres
+   * `SELECT … FOR UPDATE`). In-memory implementations alias {@link findById}.
+   * Optional so existing test doubles keep compiling.
+   */
+  lockById?(id: string): Promise<CreditLine | null>;
+
+  /**
    * Find credit lines by wallet address
    */
   findByWalletAddress(walletAddress: string): Promise<CreditLine[]>;

@@ -87,14 +87,19 @@ describe('Credit routes', () => {
 
   describe('POST /api/credit/lines/:id/draw', () => {
     it('returns 200 with valid body', async () => {
+      const created = await request(app)
+        .post('/api/credit/lines')
+        .send({ walletAddress: VALID_ADDRESS, requestedLimit: '1000' });
+      const lineId = created.body.data.id;
+
       const res = await request(app)
-        .post('/api/credit/lines/line-1/draw')
+        .post(`/api/credit/lines/${lineId}/draw`)
         .send({ walletAddress: VALID_ADDRESS, amount: '100' });
 
       expect(res.status).toBe(200);
       expect(res.body.walletAddress).toBe(VALID_ADDRESS);
       expect(res.body.amount).toBe('100');
-      expect(res.body.id).toBe('line-1');
+      expect(res.body.id).toBe(lineId);
       expect(res.body.txHash).toBeNull();
       expect(res.body.status).toBe('pending');
     });
@@ -138,14 +143,22 @@ describe('Credit routes', () => {
 
   describe('POST /api/credit/lines/:id/repay', () => {
     it('returns 200 with valid body', async () => {
+      const created = await request(app)
+        .post('/api/credit/lines')
+        .send({ walletAddress: VALID_ADDRESS, requestedLimit: '1000' });
+      const lineId = created.body.data.id;
+      await request(app)
+        .post(`/api/credit/lines/${lineId}/draw`)
+        .send({ walletAddress: VALID_ADDRESS, amount: '100' });
+
       const res = await request(app)
-        .post('/api/credit/lines/line-1/repay')
+        .post(`/api/credit/lines/${lineId}/repay`)
         .send({ walletAddress: VALID_ADDRESS, amount: '50' });
 
       expect(res.status).toBe(200);
       expect(res.body.walletAddress).toBe(VALID_ADDRESS);
       expect(res.body.amount).toBe('50');
-      expect(res.body.id).toBe('line-1');
+      expect(res.body.id).toBe(lineId);
       expect(res.body.txHash).toBeNull();
       expect(res.body.status).toBe('pending');
     });

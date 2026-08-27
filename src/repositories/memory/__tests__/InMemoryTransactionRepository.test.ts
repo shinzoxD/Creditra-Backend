@@ -349,4 +349,22 @@ describe('InMemoryTransactionRepository', () => {
       expect(repository['transactions'].size).toBe(0);
     });
   });
+
+  describe('snapshot helpers', () => {
+    it('exportState / importState round-trips rows', async () => {
+      await repository.create({
+        creditLineId: 'cl-123',
+        amount: '100.00',
+        type: TransactionType.BORROW
+      });
+      const snap = repository.exportState();
+      await repository.create({
+        creditLineId: 'cl-123',
+        amount: '50.00',
+        type: TransactionType.REPAY
+      });
+      repository.importState(snap);
+      expect(await repository.count()).toBe(1);
+    });
+  });
 });

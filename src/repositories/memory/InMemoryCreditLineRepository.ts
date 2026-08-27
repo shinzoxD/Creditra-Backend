@@ -37,6 +37,10 @@ export class InMemoryCreditLineRepository implements CreditLineRepository {
     return this.creditLines.get(id) || null;
   }
 
+  async lockById(id: string): Promise<CreditLine | null> {
+    return this.findById(id);
+  }
+
   async findByWalletAddress(walletAddress: string): Promise<CreditLine[]> {
     const filtered = Array.from(this.creditLines.values()).filter(cl => cl.walletAddress === walletAddress);
     return this.sortByNewest(filtered);
@@ -146,5 +150,18 @@ export class InMemoryCreditLineRepository implements CreditLineRepository {
   // Helper method for testing
   clear(): void {
     this.creditLines.clear();
+  }
+
+  /** Test helper — snapshot for injected-failure rollback harnesses. */
+  exportState(): CreditLine[] {
+    return Array.from(this.creditLines.values()).map((line) => ({ ...line }));
+  }
+
+  /** Test helper — restore a snapshot taken by {@link exportState}. */
+  importState(lines: CreditLine[]): void {
+    this.creditLines.clear();
+    for (const line of lines) {
+      this.creditLines.set(line.id, { ...line });
+    }
   }
 }

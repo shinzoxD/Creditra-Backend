@@ -19,11 +19,20 @@
 import { type CreditLineRepository } from "../repositories/interfaces/CreditLineRepository.js";
 import { type RiskEvaluationRepository } from "../repositories/interfaces/RiskEvaluationRepository.js";
 import { type TransactionRepository } from "../repositories/interfaces/TransactionRepository.js";
+import { type AuditEventRepository } from "../repositories/interfaces/AuditEventRepository.js";
 import { getConnection, type DbClient } from "../db/client.js";
+import {
+  createDbTransactionRunner,
+  passthroughTransactionRunner,
+  type TransactionRunner,
+} from "../db/transaction.js";
 import { InMemoryCreditLineRepository } from "../repositories/memory/InMemoryCreditLineRepository.js";
 import { InMemoryRiskEvaluationRepository } from "../repositories/memory/InMemoryRiskEvaluationRepository.js";
 import { InMemoryTransactionRepository } from "../repositories/memory/InMemoryTransactionRepository.js";
+import { InMemoryAuditEventRepository } from "../repositories/memory/InMemoryAuditEventRepository.js";
 import { PostgresCreditLineRepository } from "../repositories/postgres/PostgresCreditLineRepository.js";
+import { PostgresTransactionRepository } from "../repositories/postgres/PostgresTransactionRepository.js";
+import { PostgresAuditEventRepository } from "../repositories/postgres/PostgresAuditEventRepository.js";
 import { CreditLineService } from "../services/CreditLineService.js";
 import { RiskEvaluationService } from "../services/RiskEvaluationService.js";
 import { createRiskProvider } from "../services/providers/providerFactory.js";
@@ -42,9 +51,11 @@ export class Container {
   private _creditLineRepository!: CreditLineRepository;
   private _riskEvaluationRepository!: RiskEvaluationRepository;
   private _transactionRepository!: TransactionRepository;
+  private _auditEventRepository!: AuditEventRepository;
+  private _runInTransaction: TransactionRunner = passthroughTransactionRunner;
 
   // Services
-  private _creditLineService: CreditLineService;
+  private _creditLineService!: CreditLineService;
   private _riskEvaluationService: RiskEvaluationService;
   private _reconciliationService: ReconciliationService;
   private _reconciliationWorker: ReconciliationWorker;
@@ -53,8 +64,7 @@ export class Container {
     // Initialize repositories based on environment
     this.initializeRepositories();
 
-    // Initialize services
-    this._creditLineService = new CreditLineService(this._creditLineRepository);
+    this.rebuildCreditLineService();
     this._riskEvaluationService = new RiskEvaluationService(
       this._riskEvaluationRepository,
       createRiskProvider(),
@@ -78,18 +88,29 @@ export class Container {
     const useDatabase = process.env.DATABASE_URL && process.env.NODE_ENV !== 'test';
     
     if (useDatabase) {
-      // Use PostgreSQL repositories
+      // Use PostgreSQL repositories sharing one client so BEGIN/COMMIT covers
+      // credit-line state, ledger rows, and audit events together.
       this._dbClient = getConnection();
+      this._runInTransaction = createDbTransactionRunner(this._dbClient);
       this._creditLineRepository = new PostgresCreditLineRepository(this._dbClient);
-      // TODO: Implement PostgreSQL versions of other repositories
       this._riskEvaluationRepository = new InMemoryRiskEvaluationRepository();
-      this._transactionRepository = new InMemoryTransactionRepository();
+      this._transactionRepository = new PostgresTransactionRepository(this._dbClient);
+      this._auditEventRepository = new PostgresAuditEventRepository(this._dbClient);
     } else {
       // Use in-memory repositories (for development/testing)
       this._creditLineRepository = new InMemoryCreditLineRepository();
       this._riskEvaluationRepository = new InMemoryRiskEvaluationRepository();
       this._transactionRepository = new InMemoryTransactionRepository();
+      this._auditEventRepository = new InMemoryAuditEventRepository();
     }
+  }
+
+  private rebuildCreditLineService(): void {
+    this._creditLineService = new CreditLineService(this._creditLineRepository, {
+      transactionRepository: this._transactionRepository,
+      auditEventRepository: this._auditEventRepository,
+      runInTransaction: this._runInTransaction,
+    });
   }
 
   public static getInstance(): Container {
@@ -137,9 +158,6 @@ export class Container {
   }): void {
     if (repositories.creditLineRepository) {
       this._creditLineRepository = repositories.creditLineRepository;
-      this._creditLineService = new CreditLineService(
-        this._creditLineRepository,
-      );
     }
 
     if (repositories.riskEvaluationRepository) {
@@ -152,6 +170,10 @@ export class Container {
 
     if (repositories.transactionRepository) {
       this._transactionRepository = repositories.transactionRepository;
+    }
+
+    if (repositories.creditLineRepository || repositories.transactionRepository) {
+      this.rebuildCreditLineService();
     }
   }
 

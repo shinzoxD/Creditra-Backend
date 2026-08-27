@@ -425,4 +425,28 @@ describe('InMemoryCreditLineRepository', () => {
       expect(result.nextCursor).toBeNull();
     });
   });
+
+  describe('lock and snapshot helpers', () => {
+    it('lockById aliases findById', async () => {
+      const created = await repository.create({
+        walletAddress: 'GBAHQCUPC7G2B4D2F2I2K2M2O2Q2S2U2W2Y2A2C2E2G2I2K2M2O2Q2S1',
+        creditLimit: '1000.00',
+        interestRateBps: 500
+      });
+      expect(await repository.lockById(created.id)).toEqual(created);
+      expect(await repository.lockById('missing')).toBeNull();
+    });
+
+    it('exportState / importState round-trips rows', async () => {
+      const created = await repository.create({
+        walletAddress: 'GBAHQCUPC7G2B4D2F2I2K2M2O2Q2S2U2W2Y2A2C2E2G2I2K2M2O2Q2S1',
+        creditLimit: '1000.00',
+        interestRateBps: 500
+      });
+      const snap = repository.exportState();
+      await repository.update(created.id, { utilized: '50' });
+      repository.importState(snap);
+      expect((await repository.findById(created.id))?.utilized).toBe('0');
+    });
+  });
 });

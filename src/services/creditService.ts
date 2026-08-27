@@ -287,6 +287,11 @@ export async function submitDrawRequest(
   body: DrawBody,
   soroban: SorobanClient = noopSorobanClient,
 ): Promise<DrawResult> {
+  // Persist utilized + ledger + audit atomically *before* the chain submit.
+  // Soroban RPC stays outside the DB transaction (no I/O inside BEGIN).
+  const { Container } = await import('../container/Container.js');
+  await Container.getInstance().creditLineService.draw(id, body.walletAddress, body.amount);
+
   const txHash = await soroban.submitDraw(body.walletAddress, id, body.amount);
   return {
     id,
@@ -302,6 +307,9 @@ export async function submitRepayRequest(
   body: RepayBody,
   soroban: SorobanClient = noopSorobanClient,
 ): Promise<RepayResult> {
+  const { Container } = await import('../container/Container.js');
+  await Container.getInstance().creditLineService.repay(id, body.walletAddress, body.amount);
+
   const txHash = await soroban.submitRepay(body.walletAddress, id, body.amount);
   return {
     id,

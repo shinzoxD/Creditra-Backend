@@ -90,4 +90,17 @@ export class InMemoryTransactionRepository implements TransactionRepository {
   clear(): void {
     this.transactions.clear();
   }
+
+  /** Test helper — snapshot for injected-failure rollback harnesses. */
+  exportState(): Transaction[] {
+    return Array.from(this.transactions.values()).map((tx) => ({ ...tx }));
+  }
+
+  /** Test helper — restore a snapshot taken by {@link exportState}. */
+  importState(rows: Transaction[]): void {
+    this.transactions.clear();
+    for (const tx of rows) {
+      this.transactions.set(tx.id, { ...tx });
+    }
+  }
 }

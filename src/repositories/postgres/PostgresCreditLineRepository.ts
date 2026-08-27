@@ -8,10 +8,23 @@ interface CreditLineRow {
   currency: string;
   status: string;
   interest_rate_bps: number;
+  utilized?: string;
   created_at: Date;
   updated_at: Date;
   wallet_address: string;
 }
+
+const CREDIT_LINE_SELECT = `
+        cl.id,
+        cl.credit_limit,
+        cl.currency,
+        cl.status,
+        cl.interest_rate_bps,
+        cl.utilized,
+        cl.created_at,
+        cl.updated_at,
+        b.wallet_address
+`;
 
 export class PostgresCreditLineRepository implements CreditLineRepository {
   constructor(private client: DbClient) {}
@@ -63,46 +76,36 @@ export class PostgresCreditLineRepository implements CreditLineRepository {
   }
 
   async findById(id: string): Promise<CreditLine | null> {
+    return this.loadById(id, false);
+  }
+
+  async lockById(id: string): Promise<CreditLine | null> {
+    return this.loadById(id, true);
+  }
+
+  private async loadById(id: string, forUpdate: boolean): Promise<CreditLine | null> {
     const query = `
-      SELECT 
-        cl.id,
-        cl.credit_limit,
-        cl.currency,
-        cl.status,
-        cl.interest_rate_bps,
-        cl.created_at,
-        cl.updated_at,
-        b.wallet_address
+      SELECT
+        ${CREDIT_LINE_SELECT}
       FROM credit_lines cl
       JOIN borrowers b ON cl.borrower_id = b.id
       WHERE cl.id = $1
+      ${forUpdate ? 'FOR UPDATE OF cl' : ''}
     `;
 
     const result = await this.client.query(query, [id]);
-    
+
     if (result.rows.length === 0) {
       return null;
     }
 
-    const row = result.rows[0] as CreditLineRow;
-
-    // Calculate available credit by subtracting total draws
-    const availableCredit = await this.calculateAvailableCredit(id, row.credit_limit);
-
-    return this.toCreditLine(row, availableCredit);
+    return this.toCreditLine(result.rows[0] as CreditLineRow);
   }
 
   async findByWalletAddress(walletAddress: string): Promise<CreditLine[]> {
     const query = `
-      SELECT 
-        cl.id,
-        cl.credit_limit,
-        cl.currency,
-        cl.status,
-        cl.interest_rate_bps,
-        cl.created_at,
-        cl.updated_at,
-        b.wallet_address
+      SELECT
+        ${CREDIT_LINE_SELECT}
       FROM credit_lines cl
       JOIN borrowers b ON cl.borrower_id = b.id
       WHERE b.wallet_address = $1
@@ -110,27 +113,13 @@ export class PostgresCreditLineRepository implements CreditLineRepository {
     `;
 
     const result = await this.client.query(query, [walletAddress]);
-    const creditLines: CreditLine[] = [];
-
-    for (const row of result.rows as CreditLineRow[]) {
-      const availableCredit = await this.calculateAvailableCredit(row.id, row.credit_limit);
-      creditLines.push(this.toCreditLine(row, availableCredit));
-    }
-
-    return creditLines;
+    return (result.rows as CreditLineRow[]).map((row) => this.toCreditLine(row));
   }
 
   async findAll(offset = 0, limit = 100): Promise<CreditLine[]> {
     const query = `
-      SELECT 
-        cl.id,
-        cl.credit_limit,
-        cl.currency,
-        cl.status,
-        cl.interest_rate_bps,
-        cl.created_at,
-        cl.updated_at,
-        b.wallet_address
+      SELECT
+        ${CREDIT_LINE_SELECT}
       FROM credit_lines cl
       JOIN borrowers b ON cl.borrower_id = b.id
       ORDER BY cl.created_at DESC
@@ -138,14 +127,7 @@ export class PostgresCreditLineRepository implements CreditLineRepository {
     `;
 
     const result = await this.client.query(query, [limit, offset]);
-    const creditLines: CreditLine[] = [];
-
-    for (const row of result.rows as CreditLineRow[]) {
-      const availableCredit = await this.calculateAvailableCredit(row.id, row.credit_limit);
-      creditLines.push(this.toCreditLine(row, availableCredit));
-    }
-
-    return creditLines;
+    return (result.rows as CreditLineRow[]).map((row) => this.toCreditLine(row));
   }
 
   async findAllWithCursor(cursor?: string, limit = 100): Promise<CursorPaginationResult> {
@@ -176,14 +158,7 @@ export class PostgresCreditLineRepository implements CreditLineRepository {
 
     const query = `
       SELECT
-        cl.id,
-        cl.credit_limit,
-        cl.currency,
-        cl.status,
-        cl.interest_rate_bps,
-        cl.created_at,
-        cl.updated_at,
-        b.wallet_address
+        ${CREDIT_LINE_SELECT}
       FROM credit_lines cl
       JOIN borrowers b ON cl.borrower_id = b.id
       ${whereClause}
@@ -192,13 +167,7 @@ export class PostgresCreditLineRepository implements CreditLineRepository {
     `;
 
     const result = await this.client.query(query, values);
-    const rows = result.rows as CreditLineRow[];
-    const creditLines: CreditLine[] = [];
-
-    for (const row of rows) {
-      const availableCredit = await this.calculateAvailableCredit(row.id, row.credit_limit);
-      creditLines.push(this.toCreditLine(row, availableCredit));
-    }
+    const creditLines = (result.rows as CreditLineRow[]).map((row) => this.toCreditLine(row));
 
     const hasMore = creditLines.length > limit;
     const items = creditLines.slice(0, limit);
@@ -231,6 +200,11 @@ export class PostgresCreditLineRepository implements CreditLineRepository {
     if (request.status !== undefined) {
       setParts.push(`status = $${paramIndex++}`);
       values.push(request.status);
+    }
+
+    if (request.utilized !== undefined) {
+      setParts.push(`utilized = $${paramIndex++}`);
+      values.push(request.utilized);
     }
 
     if (setParts.length === 0) {
@@ -317,30 +291,23 @@ export class PostgresCreditLineRepository implements CreditLineRepository {
     return row.wallet_address;
   }
 
-  /**
-   * Calculate available credit by subtracting total draws from credit limit.
-   * For now, returns the full credit limit since we don't have transaction tracking yet.
-   */
-  private async calculateAvailableCredit(_creditLineId: string, creditLimit: string): Promise<string> {
-    // TODO: When transaction repository is implemented, calculate:
-    // creditLimit - SUM(transactions where type = 'draw' and credit_line_id = creditLineId)
-    
-    // For now, return full credit limit
-    return creditLimit;
+  private calculateAvailable(creditLimit: string, utilized: string): string {
+    const utilizedNum = Number.parseFloat(utilized);
+    if (!Number.isFinite(utilizedNum) || utilizedNum === 0) {
+      return creditLimit;
+    }
+    const available = Number.parseFloat(creditLimit) - utilizedNum;
+    return Number.isFinite(available) ? available.toString() : creditLimit;
   }
 
-  private calculateUtilized(creditLimit: string, availableCredit: string): string {
-    const utilized = Number.parseFloat(creditLimit) - Number.parseFloat(availableCredit);
-    return Number.isFinite(utilized) ? Math.max(0, utilized).toString() : '0';
-  }
-
-  private toCreditLine(row: CreditLineRow, availableCredit: string): CreditLine {
+  private toCreditLine(row: CreditLineRow): CreditLine {
+    const utilized = row.utilized ?? '0';
     return {
       id: row.id,
       walletAddress: row.wallet_address,
       creditLimit: row.credit_limit,
-      availableCredit,
-      utilized: this.calculateUtilized(row.credit_limit, availableCredit),
+      availableCredit: this.calculateAvailable(row.credit_limit, utilized),
+      utilized,
       interestRateBps: row.interest_rate_bps,
       status: row.status as CreditLineStatus,
       createdAt: row.created_at,

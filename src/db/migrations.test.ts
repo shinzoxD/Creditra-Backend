@@ -92,12 +92,14 @@ describe('applyMigration', () => {
 describe('runPendingMigrations', () => {
   it('skips already applied migrations', async () => {
     const client = createMockClient();
-    vi.mocked(client.query)
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ version: '001_initial_schema' }, { version: '002_add_interest_rate_to_credit_lines' }] });
     const migrationsDir = await import('path').then((p) =>
       p.join(process.cwd(), 'migrations')
     );
+    const files = await listMigrationFiles(migrationsDir);
+    const applied = files.map((f) => versionFromFilename(f)).map((version) => ({ version }));
+    vi.mocked(client.query)
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: applied });
     const run = await runPendingMigrations(client, migrationsDir);
     expect(run).toEqual([]);
   });
@@ -113,7 +115,8 @@ describe('runPendingMigrations', () => {
     const run = await runPendingMigrations(client, migrationsDir);
     expect(run).toContain('001_initial_schema');
     expect(run).toContain('002_add_interest_rate_to_credit_lines');
-    expect(run.length).toBeGreaterThanOrEqual(2);
+    expect(run).toContain('003_add_utilized_to_credit_lines');
+    expect(run.length).toBeGreaterThanOrEqual(3);
   });
 
   it('applies only new migrations when some are already applied', async () => {

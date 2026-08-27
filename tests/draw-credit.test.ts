@@ -10,12 +10,17 @@ app.use('/api/credit', creditRouter);
 
 describe('POST /api/credit/lines/:id/draw', () => {
      it('should draw successfully with valid body', async () => {
+          const created = await request(app)
+               .post('/api/credit/lines')
+               .send({ walletAddress: VALID_ADDRESS, requestedLimit: '1000' });
+          const lineId = created.body.data.id;
+
           const res = await request(app)
-               .post('/api/credit/lines/line-1/draw')
+               .post(`/api/credit/lines/${lineId}/draw`)
                .send({ walletAddress: VALID_ADDRESS, amount: '200' });
 
           expect(res.status).toBe(200);
-          expect(res.body.id).toBe('line-1');
+          expect(res.body.id).toBe(lineId);
           expect(res.body.walletAddress).toBe(VALID_ADDRESS);
           expect(res.body.amount).toBe('200');
           expect(res.body.txHash).toBeNull();

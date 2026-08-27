@@ -300,4 +300,84 @@ describe('CreditLineService', () => {
       expect(result.hasMore).toBe(false);
     });
   });
+
+  describe('draw / repay (legacy mock repository)', () => {
+    it('should draw against an active line owned by the borrower', async () => {
+      const creditLine: CreditLine = {
+        id: 'cl-123',
+        walletAddress: 'GBAHQCUPC7G2B4D2F2I2K2M2O2Q2S2U2W2Y2A2C2E2G2I2K2M2O2Q2S1',
+        creditLimit: '1000.00',
+        availableCredit: '1000.00',
+        utilized: '0',
+        interestRateBps: 500,
+        status: CreditLineStatus.ACTIVE,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+
+      vi.mocked(mockRepository.findById).mockResolvedValue(creditLine);
+      vi.mocked(mockRepository.update).mockResolvedValue({
+        ...creditLine,
+        utilized: '200',
+        availableCredit: '800',
+      });
+
+      const result = await service.draw('cl-123', creditLine.walletAddress, '200');
+
+      expect(mockRepository.update).toHaveBeenCalledWith('cl-123', { utilized: '200' });
+      expect(result.utilized).toBe('200');
+    });
+
+    it('should throw when draw exceeds the remaining limit', async () => {
+      vi.mocked(mockRepository.findById).mockResolvedValue({
+        id: 'cl-123',
+        walletAddress: 'GBAHQCUPC7G2B4D2F2I2K2M2O2Q2S2U2W2Y2A2C2E2G2I2K2M2O2Q2S1',
+        creditLimit: '100',
+        availableCredit: '0',
+        utilized: '100',
+        interestRateBps: 500,
+        status: CreditLineStatus.ACTIVE,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
+
+      await expect(
+        service.draw('cl-123', 'GBAHQCUPC7G2B4D2F2I2K2M2O2Q2S2U2W2Y2A2C2E2G2I2K2M2O2Q2S1', '1'),
+      ).rejects.toThrow('Credit limit exceeded');
+    });
+
+    it('should repay down to a floor of zero', async () => {
+      vi.mocked(mockRepository.findById).mockResolvedValue({
+        id: 'cl-123',
+        walletAddress: 'GBAHQCUPC7G2B4D2F2I2K2M2O2Q2S2U2W2Y2A2C2E2G2I2K2M2O2Q2S1',
+        creditLimit: '1000',
+        availableCredit: '600',
+        utilized: '400',
+        interestRateBps: 500,
+        status: CreditLineStatus.ACTIVE,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
+      vi.mocked(mockRepository.update).mockImplementation(async (_id, request) => ({
+        id: 'cl-123',
+        walletAddress: 'GBAHQCUPC7G2B4D2F2I2K2M2O2Q2S2U2W2Y2A2C2E2G2I2K2M2O2Q2S1',
+        creditLimit: '1000',
+        availableCredit: '1000',
+        utilized: request.utilized ?? '0',
+        interestRateBps: 500,
+        status: CreditLineStatus.ACTIVE,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }));
+
+      const result = await service.repay(
+        'cl-123',
+        'GBAHQCUPC7G2B4D2F2I2K2M2O2Q2S2U2W2Y2A2C2E2G2I2K2M2O2Q2S1',
+        '1000',
+      );
+
+      expect(mockRepository.update).toHaveBeenCalledWith('cl-123', { utilized: '0' });
+      expect(result.utilized).toBe('0');
+    });
+  });
 });

@@ -275,6 +275,36 @@ describe('PostgresCreditLineRepository', () => {
       expect(result).toBeNull();
     });
 
+    it('should persist utilized on update', async () => {
+      const creditLineId = 'credit-line-123';
+      const now = new Date();
+
+      vi.mocked(mockClient.query)
+        .mockResolvedValueOnce({ rows: [{ id: creditLineId }] })
+        .mockResolvedValueOnce({
+          rows: [{
+            id: creditLineId,
+            credit_limit: '10000.00',
+            currency: 'USDC',
+            status: 'active',
+            interest_rate_bps: 500,
+            utilized: '250',
+            created_at: now,
+            updated_at: now,
+            wallet_address: 'GTEST123'
+          }]
+        });
+
+      const result = await repository.update(creditLineId, { utilized: '250' });
+
+      expect(result?.utilized).toBe('250');
+      expect(result?.availableCredit).toBe('9750');
+      expect(mockClient.query).toHaveBeenCalledWith(
+        expect.stringContaining('utilized = $'),
+        ['250', creditLineId]
+      );
+    });
+
     it('should return current record when no updates provided', async () => {
       const creditLineId = 'credit-line-123';
       const now = new Date();
@@ -322,6 +352,20 @@ describe('PostgresCreditLineRepository', () => {
       const result = await repository.delete('nonexistent');
 
       expect(result).toBe(false);
+    });
+  });
+
+  describe('lockById', () => {
+    it('issues SELECT … FOR UPDATE OF cl', async () => {
+      vi.mocked(mockClient.query).mockResolvedValueOnce({ rows: [] });
+
+      const result = await repository.lockById('credit-line-123');
+
+      expect(result).toBeNull();
+      expect(mockClient.query).toHaveBeenCalledWith(
+        expect.stringContaining('FOR UPDATE OF cl'),
+        ['credit-line-123']
+      );
     });
   });
 

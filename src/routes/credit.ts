@@ -70,6 +70,14 @@ function handleServiceError(err: unknown, res: Response): void {
     return;
   }
   const message = err instanceof Error ? err.message : 'Internal server error';
+  if (message === 'Credit line not found') {
+    res.status(404).json({ error: message });
+    return;
+  }
+  if (message === 'Unauthorized') {
+    res.status(403).json({ error: message });
+    return;
+  }
   res.status(500).json({ error: message });
 }
 
@@ -253,21 +261,21 @@ creditRouter.post(
   },
 );
 
-creditRouter.post('/lines/:id/draw', validateBody(drawSchema), async (req, res, next) => {
+creditRouter.post('/lines/:id/draw', validateBody(drawSchema), async (req, res) => {
   try {
     const result = await submitDrawRequest(req.params.id, req.body as DrawBody);
     res.json(result);
   } catch (err) {
-    next(err);
+    handleServiceError(err, res);
   }
 });
 
-creditRouter.post('/lines/:id/repay', validateBody(repaySchema), async (req, res, next) => {
+creditRouter.post('/lines/:id/repay', validateBody(repaySchema), async (req, res) => {
   try {
     const result = await submitRepayRequest(req.params.id, req.body as RepayBody);
     res.json(result);
   } catch (err) {
-    next(err);
+    handleServiceError(err, res);
   }
 });
 
