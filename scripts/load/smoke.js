@@ -20,19 +20,28 @@ export const options = {
 };
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
+// Valid Ed25519-strkey shape (G + 55 base32 chars). Used only as a payload;
+// the rules-engine provider does not talk to Horizon in CI.
+const VALID_WALLET = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+
+function envelopeData(body) {
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed && typeof parsed === 'object' && parsed.data != null) {
+      return parsed.data;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
 
 export default function () {
   // Test 1: Health check
   let healthRes = http.get(`${BASE_URL}/health`);
   check(healthRes, {
     'health status is 200': (r) => r.status === 200,
-    'health response has status ok': (r) => {
-      try {
-        return JSON.parse(r.body).status === 'ok';
-      } catch {
-        return false;
-      }
-    },
+    'health response has status ok': (r) => envelopeData(r.body)?.status === 'ok',
   }) || errorRate.add(1);
 
   sleep(0.5);
@@ -41,21 +50,15 @@ export default function () {
   let listRes = http.get(`${BASE_URL}/api/credit/lines?offset=0&limit=10`);
   check(listRes, {
     'list credit lines status is 200': (r) => r.status === 200,
-    'list response has creditLines array': (r) => {
-      try {
-        const body = JSON.parse(r.body);
-        return Array.isArray(body.creditLines);
-      } catch {
-        return false;
-      }
-    },
+    'list response has creditLines array': (r) =>
+      Array.isArray(envelopeData(r.body)?.creditLines),
   }) || errorRate.add(1);
 
   sleep(0.5);
 
   // Test 3: Risk evaluation
   const riskPayload = JSON.stringify({
-    walletAddress: 'GABC1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDE',
+    walletAddress: VALID_WALLET,
   });
 
   const riskParams = {
@@ -67,14 +70,8 @@ export default function () {
   let riskRes = http.post(`${BASE_URL}/api/risk/evaluate`, riskPayload, riskParams);
   check(riskRes, {
     'risk evaluate status is 200': (r) => r.status === 200,
-    'risk response has walletAddress': (r) => {
-      try {
-        const body = JSON.parse(r.body);
-        return body.walletAddress !== undefined;
-      } catch {
-        return false;
-      }
-    },
+    'risk response has walletAddress': (r) =>
+      envelopeData(r.body)?.walletAddress !== undefined,
   }) || errorRate.add(1);
 
   sleep(1);
